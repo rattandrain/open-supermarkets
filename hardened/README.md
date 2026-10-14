@@ -47,4 +47,10 @@ The proxy filters hosts, not HTTPS paths: it cannot tell `/search` from `/checko
 ## Tests
 
 - `hardened/test-allowlist.js`: 40 allowed and blocked request cases, including GraphQL spoofing, encodings and look-alike hosts. Exits non-zero on any failure.
-- `hardened/verify-egress.sh`: fail-closed network test. Ocado must be reachable through the proxy; other hosts, other ports, look-alike hosts, direct connections, the Docker host, the Colima VM, the Mac, the LAN and IPv6 must not be. Exits non-zero on any failure.
+- `hardened/verify-egress.sh`: fail-closed network test. Ocado must be reachable through the proxy; other hosts, other ports, look-alike hosts, IP literal encodings, direct connections, direct DNS, the Docker host, the Colima VM, the Mac, the LAN and IPv6 must not be. Raw `CONNECT` results decide the proxy checks (a `200` is a fail). It also checks the running container: no IPv6 address but loopback, no default route, no Docker socket, session file read-only. Exits non-zero on any failure. Pass `EXTRA_TARGETS="host:port ..."` to add the Mac's real addresses and listening ports (see the kitchen repo's Mac Mini runbook).
+
+## Keeping it current
+
+Versions are pinned (lockfile, image digests, tinyproxy), so nothing updates by itself. Rebuild deliberately when any of these happens, then rerun both tests:
+- `npm audit --omit=dev` or `osv-scanner scan --lockfile package-lock.json` reports a runtime finding: `npm audit fix --package-lock-only --ignore-scripts`.
+- A base image nears end of support. Alpine 3.24 (main and community) runs to 2028-06-01; Node 24 LTS to 2028-04-30. Repin with `docker pull` then `docker image inspect <image> --format '{{index .RepoDigests 0}}'`, and repin tinyproxy to the version `apk policy tinyproxy` shows.
