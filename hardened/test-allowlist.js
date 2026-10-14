@@ -36,6 +36,7 @@ const bad = [
   ['GET', 'https://www.ocado.com/api/order/v6/orders/../../checkout'],
   ['GET', 'https://www.ocado.com/api/cart/v1/carts/active/checkout'],
   ['PUT', 'https://www.ocado.com/api/cart/v1/carts/active'],
+  ['GET', 'https://www.ocado.com/api/recurringshopping/v2/web/definitions'],
   ['GET', 'https://www.ocado.com/search/../checkout'],
   ['GET', 'https://www.ocado.com/search%2F..%2Fcheckout'],
   ['GET', 'https://evil.example/search'],

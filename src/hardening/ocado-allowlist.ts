@@ -87,7 +87,6 @@ const RULES: Rule[] = [
     why: 'the exact order history query only',
   },
   { method: 'GET', path: /^\/api\/order\/v6\/orders\/[A-Za-z0-9-]+$/, why: 'single past order' },
-  { method: 'GET', path: /^\/api\/recurringshopping\/v2\/web\/definitions$/, why: 'regulars list' },
 ];
 
 function parseBody(data: unknown): any {

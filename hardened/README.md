@@ -8,7 +8,7 @@ This branch is upstream `abracadabra50/open-supermarkets` at commit `aff6880` pl
 |---|---|
 | `src/hardening/ocado-allowlist.ts` | New. Every request the Ocado HTTP client makes must match a short method + path allowlist on `https://www.ocado.com`, or it is refused in-process. GraphQL is allowed only for the exact order-history query, with only the expected keys and variables. Redirects are never followed. |
 | `src/providers/ocado.ts` | Installs the allowlist; redirects off. The bodies of `login`, `logout`, `saveSession`, `getLocationIds`, `getDeliverySlots`, `bookSlot`, `checkout`, `clearBasket` and `importSession` are removed and replaced with a single throw. The order-history GraphQL query now lives in the allowlist module. |
-| `src/mcp-ocado.ts` | New, Ocado-only MCP server. Tools: status, search, product, favourites, regulars, basket view, basket set, order history. No login, slots, checkout or clear-basket tool. Outputs are trimmed to needed fields and cleaned of control, zero-width and bidirectional characters. Errors are fixed categories, never raw upstream text. Basket set validates the whole request first, rejects duplicate or malformed product ids, max 6 per line and 25 lines per call. |
+| `src/mcp-ocado.ts` | New, Ocado-only MCP server. Tools: status, search, product, favourites, basket view, basket set, order history. No login, slots, checkout or clear-basket tool. Outputs are trimmed to needed fields and cleaned of control, zero-width and bidirectional characters. Errors are fixed categories, never raw upstream text. Basket set validates the whole request first, rejects duplicate or malformed product ids, max 6 per line and 25 lines per call; if a write fails part-way it reports exactly which changes were made and the resulting basket (writes cannot be rolled back). |
 | `tsconfig.hardened.json` | New. Compiles only `src/mcp-ocado.ts` and what it imports. |
 | `hardened/` | Container build, egress proxy, tests. |
 
@@ -28,7 +28,6 @@ The upstream source files remain in the repo but are never built or run; the con
 | PUT | `/api/webproductpagews/v6/products` | Product details |
 | POST | `/graphql` | Only the exact `GetCompletedOrders` query and variables |
 | GET | `/api/order/v6/orders/<id>` | One past order |
-| GET | `/api/recurringshopping/v2/web/definitions` | Regulars list |
 
 Anything else, including `/checkout`, `/api/ecomslots`, `/login` and account pages, is refused. Paths containing `..`, encoded slashes or dots, backslashes or `//` are refused. Any 3xx response is an error.
 

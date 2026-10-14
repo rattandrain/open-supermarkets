@@ -6,7 +6,7 @@ set -u
 cd "$(dirname "$0")"
 docker compose up -d egress >/dev/null
 
-docker compose run --rm -T --entrypoint node ocado-mcp -e '
+docker compose run --rm -T -e EXTRA_TARGETS="${EXTRA_TARGETS:-}" --entrypoint node ocado-mcp -e '
 const axios = require("axios");
 const net = require("net");
 
@@ -88,6 +88,10 @@ function connectViaProxy(target) {
     ["192.168.5.2", 22], ["192.168.5.2", 80],
     ["192.168.1.1", 80],
     ["2606:4700:4700::1111", 443],
+    // Discovered on the Mac by the runbook: "host:port host:port ..."
+    ...String(process.env.EXTRA_TARGETS || "").split(/\s+/).filter(Boolean).map((t) => {
+      const i = t.lastIndexOf(":"); return [t.slice(0, i), Number(t.slice(i + 1))];
+    }),
   ]) {
     r = await tcp(h, p);
     report(!r.reached, `no route to ${h}:${p}`, r.detail);

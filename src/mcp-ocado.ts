@@ -2,8 +2,8 @@
 /**
  * Hardened, Ocado-only MCP server.
  *
- * Exposes read tools (search, product details, favourites, regulars, basket,
- * order history) and one basket-edit tool. There is deliberately no tool for
+ * Exposes read tools (search, product details, favourites, basket, order
+ * history) and one basket-edit tool. There is deliberately no tool for
  * login, slots, checkout, clearing the basket or any other provider.
  *
  * Everything returned from Ocado is retailer data. It is cleaned of control
@@ -48,22 +48,6 @@ function clean(value: unknown): string | undefined {
     .replace(/\s+/g, ' ')
     .trim();
   return s.length > MAX_STRING ? `${s.slice(0, MAX_STRING)}…` : s;
-}
-
-/** Deep-clean an unknown structure: strings cleaned, depth and size capped. */
-function cleanDeep(value: unknown, depth = 0): unknown {
-  if (depth > 4) return undefined;
-  if (typeof value === 'string') return clean(value);
-  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
-  if (Array.isArray(value)) return value.slice(0, 100).map((v) => cleanDeep(v, depth + 1));
-  if (typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>).slice(0, 50)) {
-      out[clean(k) ?? ''] = cleanDeep(v, depth + 1);
-    }
-    return out;
-  }
-  return undefined;
 }
 
 function json(value: unknown) {
@@ -186,11 +170,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: 'ocado_regulars',
-      description: `List the account's recurring shopping ("Regulars") definitions. ${DATA_NOTE}`,
-      inputSchema: { type: 'object', properties: {} },
-    },
-    {
       name: 'ocado_basket_view',
       description: `Show the current basket with quantities and prices. ${DATA_NOTE}`,
       inputSchema: { type: 'object', properties: {} },
@@ -252,9 +231,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return json((await ocado().getFavourites({ limit })).map(slimProduct));
       }
 
-      case 'ocado_regulars':
-        return json(cleanDeep(await ocado().getRegulars()));
-
       case 'ocado_basket_view':
         return json(slimBasket(await ocado().getBasket()));
 
@@ -265,14 +241,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           before.items.map((i) => [i.product_uid, i.quantity] as [string, number]),
         );
         const changes: Array<{ product_id: string; from: number; to: number }> = [];
-        for (const { id, qty } of items) {
-          const from = current.get(id) ?? 0;
-          if (qty === from) continue;
-          if (from === 0) await ocado().addToBasket(id, qty);
-          else if (qty === 0) await ocado().removeFromBasket(id);
-          else await ocado().updateBasketItem(id, qty);
-          current.set(id, qty);
-          changes.push({ product_id: id, from, to: qty });
+        try {
+          for (const { id, qty } of items) {
+            const from = current.get(id) ?? 0;
+            if (qty === from) continue;
+            if (from === 0) await ocado().addToBasket(id, qty);
+            else if (qty === 0) await ocado().removeFromBasket(id);
+            else await ocado().updateBasketItem(id, qty);
+            current.set(id, qty);
+            changes.push({ product_id: id, from, to: qty });
+          }
+        } catch (err) {
+          // Writes are separate requests and cannot be rolled back: report exactly what happened.
+          let basket: unknown = 'could not be read';
+          try { basket = slimBasket(await ocado().getBasket()); } catch { /* keep message */ }
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({
+              error: describeError(err),
+              partial: true,
+              completed_changes: changes,
+              not_attempted: items.slice(changes.length).map((i) => i.id),
+              basket,
+            }, null, 2) }],
+            isError: true,
+          };
         }
         return json({ changes, basket: slimBasket(await ocado().getBasket()) });
       }
