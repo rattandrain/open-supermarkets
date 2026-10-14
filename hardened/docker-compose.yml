@@ -38,6 +38,10 @@ services:
 networks:
   internal:
     internal: true
+    driver_opts:
+      # No address for the Colima VM on this network, so containers cannot reach
+      # the VM's own services (its SSH server listens on every interface).
+      com.docker.network.bridge.inhibit_ipv4: "true"
     ipam:
       config:
         - subnet: 172.30.77.0/24

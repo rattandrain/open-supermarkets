@@ -34,6 +34,7 @@ Anything else, including `/checkout`, `/api/ecomslots`, `/login` and account pag
 ## Containment
 
 - `ocado-mcp` runs on a Docker network marked `internal`: it has no route to the internet or the home network.
+- That network has no gateway address (`inhibit_ipv4`), so the container cannot reach services on the Docker host or Colima VM either (an `internal` network alone still lets it reach the VM's SSH server).
 - Its only way out is the `egress` proxy (tinyproxy), which allows HTTPS tunnels to `www.ocado.com:443` and nothing else, and accepts clients only from the internal subnet `172.30.77.0/24`.
 - Read-only root filesystem, all Linux capabilities dropped, no privilege escalation, runs as the unprivileged `node` user.
 - The session cookie file is mounted read-only from `~/.ocado-mcp/session.json`.
