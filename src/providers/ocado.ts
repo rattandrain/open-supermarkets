@@ -312,7 +312,8 @@ export class OcadoProvider implements GroceryProvider {
   // -------------------------------------------------------------- search --
 
   async search(query: string, options?: SearchOptions): Promise<Product[]> {
-    return this.scrapeProductsPage(`/search?q=${encodeURIComponent(query)}`, options?.limit ?? 24);
+    // Ocado 301-redirects %20 to +, and redirects are refused, so encode spaces as + up front.
+    return this.scrapeProductsPage(`/search?${new URLSearchParams({ q: query })}`, options?.limit ?? 24);
   }
 
   async getProduct(productId: string): Promise<Product> {
