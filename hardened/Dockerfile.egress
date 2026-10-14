@@ -1,0 +1,8 @@
+# Egress proxy: the only route out for the MCP container.
+FROM alpine:3.20
+RUN apk add --no-cache tinyproxy
+COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+COPY egress-allowlist.txt /etc/tinyproxy/filter
+USER tinyproxy
+EXPOSE 8888
+CMD ["tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf"]

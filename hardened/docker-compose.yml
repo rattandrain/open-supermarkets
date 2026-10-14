@@ -1,0 +1,41 @@
+# Usage
+#   docker compose -f hardened/docker-compose.yml up -d egress          # start the proxy (stays up)
+#   docker compose -f hardened/docker-compose.yml run --rm -T ocado-mcp # MCP over stdio
+name: ocado-hardened
+
+services:
+  egress:
+    build:
+      context: .
+      dockerfile: Dockerfile.egress
+    networks: [internal, outside]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp, /run]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  ocado-mcp:
+    profiles: [mcp]
+    build:
+      context: ..
+      dockerfile: hardened/Dockerfile.mcp
+    networks: [internal]          # no direct route to the internet or the host LAN
+    environment:
+      HTTPS_PROXY: http://egress:8888
+      https_proxy: http://egress:8888
+      HTTP_PROXY: http://egress:8888
+      http_proxy: http://egress:8888
+    volumes:
+      - ${HOME}/.ocado-mcp/session.json:/home/node/.ocado/session.json:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stdin_open: true
+    depends_on: [egress]
+
+networks:
+  internal:
+    internal: true
+  outside: {}

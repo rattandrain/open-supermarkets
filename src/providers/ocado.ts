@@ -1,3 +1,4 @@
+import { installOcadoAllowlist } from '../hardening/ocado-allowlist';
 import axios, { AxiosInstance } from 'axios';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -151,6 +152,7 @@ export class OcadoProvider implements GroceryProvider {
         'Accept': 'application/json',
       },
     });
+    installOcadoAllowlist(this.client);
     this.loadSession();
   }
 
@@ -176,6 +178,7 @@ export class OcadoProvider implements GroceryProvider {
   }
 
   async login(email: string, password: string): Promise<void> {
+    throw new Error('login: Disabled in this hardened build.');
     // Playwright login against https://www.ocado.com/login.
     // If this proves brittle (Ocado tweaks their SPA), use
     // `groc --provider ocado import-session --file <cookies.json>` instead —
@@ -541,6 +544,7 @@ export class OcadoProvider implements GroceryProvider {
   }
 
   async getDeliverySlots(): Promise<DeliverySlot[]> {
+    throw new Error('getDeliverySlots: Disabled in this hardened build.');
     const { dest, region } = await this.getLocationIds();
     const res = await this.client.post(
       '/api/ecomslots/v2/slots',
@@ -619,10 +623,12 @@ export class OcadoProvider implements GroceryProvider {
   // --------------------------------------------- not yet reverse-engineered --
 
   async bookSlot(_slotId: string): Promise<void> {
+    throw new Error('bookSlot: Disabled in this hardened build.');
     throw new Error(NOT_IMPLEMENTED_YET);
   }
 
   async checkout(_dryRun?: boolean): Promise<Order> {
+    throw new Error('checkout: Disabled in this hardened build.');
     throw new Error(NOT_IMPLEMENTED_YET);
   }
 }

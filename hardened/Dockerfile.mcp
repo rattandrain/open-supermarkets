@@ -1,0 +1,12 @@
+# Hardened Ocado-only MCP server. Build context is the repo root.
+FROM node:24-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+# --ignore-scripts: no dependency install scripts run at all.
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY tsconfig.json ./
+COPY src ./src
+RUN npx tsc && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
+USER node
+ENV HOME=/home/node
+ENTRYPOINT ["node", "dist/mcp-ocado.js"]
