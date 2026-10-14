@@ -1,8 +1,8 @@
 # Hardened Ocado-only MCP server. Build context is the repo root.
-# Base image tags are pinned to digests during Mac Mini setup (runbook step 5).
+# Base images are pinned to digests (tag kept for readability; the digest wins).
 
 # Build stage: compile only the hardened entry point and what it imports.
-FROM node:24-slim AS build
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
@@ -11,7 +11,7 @@ COPY src ./src
 RUN npx tsc -p tsconfig.hardened.json
 
 # Runtime stage: production dependencies only, minus browser automation and CLI packages.
-FROM node:24-slim
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
