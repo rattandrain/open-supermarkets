@@ -9,6 +9,8 @@ docker compose up -d egress >/dev/null
 docker compose run --rm -T -e EXTRA_TARGETS="${EXTRA_TARGETS:-}" --entrypoint node ocado-mcp -e '
 const axios = require("axios");
 const net = require("net");
+const fs = require("fs");
+const dns = require("dns").promises;
 
 const PROXY = "http://egress:8888";
 let failures = 0;
@@ -66,16 +68,38 @@ function connectViaProxy(target) {
   r = await http("https://www.ocado.com/", true);
   report(r.reached, "Ocado reachable through proxy", r.detail);
 
-  // Must be blocked: other hosts through the proxy
+  // Must be blocked: other hosts through the proxy, as the real HTTP client sees it.
+  // A reply header can be forged, so the raw CONNECT checks below are the deciding test.
   for (const u of ["https://example.com/", "https://api.github.com/", "https://world.openfoodfacts.org/", "https://1.1.1.1/"]) {
     r = await http(u, true);
     report(!r.reached, `proxy refuses ${u}`, r.detail);
   }
 
-  // Must be blocked: CONNECT to other hosts, to Ocado on other ports, and to look-alike hosts
-  for (const t of ["example.com:443", "1.1.1.1:443", "www.ocado.com:80", "www.ocado.com:8443", "ocado.com:443", "www.ocado.com.example.com:443"]) {
+  // Must be blocked: raw CONNECT. Any "200" status line is a tunnel, so it fails the test
+  // whatever happens after. Covers other hosts, Ocado on other ports, look-alike hosts,
+  // and IP literal forms (IPv6, decimal and hex encodings of 1.1.1.1).
+  for (const t of [
+    "example.com:443", "api.github.com:443", "world.openfoodfacts.org:443", "1.1.1.1:443",
+    "www.ocado.com:80", "www.ocado.com:8443", "ocado.com:443", "www.ocado.com.example.com:443",
+    "www.ocado.com@example.com:443",
+    "[2606:4700:4700::1111]:443", "16843009:443", "0x01010101:443",
+  ]) {
     r = await connectViaProxy(t);
     report(!r.reached, `proxy refuses CONNECT ${t}`, r.detail);
+  }
+
+  // Must hold: the container itself has no other way out.
+  const v6 = fs.readFileSync("/proc/net/if_inet6", "utf8").trim().split("\n").filter((l) => !/\slo$/.test(l));
+  report(v6.length === 0, "no IPv6 address except loopback", v6.length ? v6.join("; ") : "loopback only");
+  const v4default = fs.readFileSync("/proc/net/route", "utf8").split("\n").slice(1).filter((l) => l.split(/\s+/)[1] === "00000000");
+  report(v4default.length === 0, "no IPv4 default route", v4default.length ? "default route present" : "none");
+  report(!fs.existsSync("/var/run/docker.sock"), "no Docker socket", "/var/run/docker.sock absent");
+  try { fs.appendFileSync("/home/node/.ocado/session.json", ""); report(false, "session file read-only", "write succeeded"); }
+  catch (e) { report(e.code === "EROFS", "session file read-only", e.code); }
+  for (const h of ["example.com", "www.ocado.com"]) {
+    // Name lookups only through the proxy: the internal network has no outside DNS (no DNS tunnel).
+    try { const a = await dns.resolve4(h); report(false, `no direct DNS for ${h}`, a.join(",")); }
+    catch (e) { report(true, `no direct DNS for ${h}`, e.code); }
   }
 
   // Must be blocked: direct connections with no proxy
