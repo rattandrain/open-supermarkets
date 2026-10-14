@@ -38,4 +38,7 @@ services:
 networks:
   internal:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24
   outside: {}

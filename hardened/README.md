@@ -6,12 +6,15 @@ This branch is upstream `abracadabra50/open-supermarkets` at commit `aff6880` pl
 
 | File | Change |
 |---|---|
-| `src/hardening/ocado-allowlist.ts` | New. Every request the Ocado HTTP client makes, and every redirect, must match a short method + path allowlist on `https://www.ocado.com`, or it is refused in-process. |
-| `src/providers/ocado.ts` | Installs the allowlist on its axios client. `login`, `getDeliverySlots`, `bookSlot` and `checkout` now throw immediately. |
-| `src/mcp-ocado.ts` | New, Ocado-only MCP server. Tools: status, search, product, favourites, regulars, basket view, basket set (max 6 per line, 25 lines per call), order history. No login, slots, checkout or clear-basket tool. |
+| `src/hardening/ocado-allowlist.ts` | New. Every request the Ocado HTTP client makes must match a short method + path allowlist on `https://www.ocado.com`, or it is refused in-process. GraphQL is allowed only for the exact order-history query, with only the expected keys and variables. Redirects are never followed. |
+| `src/providers/ocado.ts` | Installs the allowlist; redirects off. The bodies of `login`, `logout`, `saveSession`, `getLocationIds`, `getDeliverySlots`, `bookSlot`, `checkout`, `clearBasket` and `importSession` are removed and replaced with a single throw. The order-history GraphQL query now lives in the allowlist module. |
+| `src/mcp-ocado.ts` | New, Ocado-only MCP server. Tools: status, search, product, favourites, regulars, basket view, basket set, order history. No login, slots, checkout or clear-basket tool. Outputs are trimmed to needed fields and cleaned of control, zero-width and bidirectional characters. Errors are fixed categories, never raw upstream text. Basket set validates the whole request first, rejects duplicate or malformed product ids, max 6 per line and 25 lines per call. |
+| `tsconfig.hardened.json` | New. Compiles only `src/mcp-ocado.ts` and what it imports. |
 | `hardened/` | Container build, egress proxy, tests. |
 
-The upstream multi-provider `src/mcp-server.ts`, CLI and HTTP API are untouched and are not used. The container's entrypoint is `dist/mcp-ocado.js` only.
+The container image contains only the compiled hardened entry point and its imports. The upstream CLI, HTTP API, multi-provider MCP server, browser automation and other providers are not compiled into it, and Playwright, playwright-extra, the stealth plugin, chalk and commander are removed from its dependencies.
+
+The upstream source files remain in the repo but are never built or run; the container's entrypoint is `dist/mcp-ocado.js` only.
 
 ## Allowed requests
 
@@ -23,21 +26,25 @@ The upstream multi-provider `src/mcp-server.ts`, CLI and HTTP API are untouched 
 | GET | `/api/cart/v1/carts/active` | Read basket |
 | POST | `/api/cart/v1/carts/active/apply-quantity` | Change basket quantities |
 | PUT | `/api/webproductpagews/v6/products` | Product details |
-| POST | `/graphql` | Only when `operationName` is `GetCompletedOrders` |
+| POST | `/graphql` | Only the exact `GetCompletedOrders` query and variables |
 | GET | `/api/order/v6/orders/<id>` | One past order |
 | GET | `/api/recurringshopping/v2/web/definitions` | Regulars list |
 
-Anything else, including `/checkout`, `/api/ecomslots`, `/login` and account pages, is refused. Paths containing `..`, encoded slashes or dots, backslashes or `//` are refused.
+Anything else, including `/checkout`, `/api/ecomslots`, `/login` and account pages, is refused. Paths containing `..`, encoded slashes or dots, backslashes or `//` are refused. Any 3xx response is an error.
 
 ## Containment
 
 - `ocado-mcp` runs on a Docker network marked `internal`: it has no route to the internet or the home network.
-- Its only way out is the `egress` proxy (tinyproxy), which allows HTTPS tunnels to `www.ocado.com:443` and nothing else.
+- Its only way out is the `egress` proxy (tinyproxy), which allows HTTPS tunnels to `www.ocado.com:443` and nothing else, and accepts clients only from the internal subnet `172.30.77.0/24`.
 - Read-only root filesystem, all Linux capabilities dropped, no privilege escalation, runs as the unprivileged `node` user.
 - The session cookie file is mounted read-only from `~/.ocado-mcp/session.json`.
 - Dependencies are installed with `--ignore-scripts`, so no package install script runs.
 
+## Known limitation
+
+The proxy filters hosts, not HTTPS paths: it cannot tell `/search` from `/checkout` on `www.ocado.com`. The in-process allowlist is the only path-level control. Code that bypassed the allowlisted HTTP client (for example a compromised dependency) could reach other paths on `www.ocado.com` with the session cookie. Mitigations outside this repo: pinned lockfile, `--ignore-scripts`, dependency scanning, and a frozen payment card on the Ocado account.
+
 ## Tests
 
-- `hardened/test-allowlist.js`: allowed and blocked request cases against the in-process allowlist.
-- `hardened/verify-egress.sh`: proves the container reaches `www.ocado.com` through the proxy and cannot reach anything else, with or without the proxy.
+- `hardened/test-allowlist.js`: 40 allowed and blocked request cases, including GraphQL spoofing, encodings and look-alike hosts. Exits non-zero on any failure.
+- `hardened/verify-egress.sh`: fail-closed network test. Ocado must be reachable through the proxy; other hosts, other ports, look-alike hosts, direct connections, the Docker host, the Colima VM, the Mac, the LAN and IPv6 must not be. Exits non-zero on any failure.

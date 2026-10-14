@@ -1,12 +1,24 @@
 # Hardened Ocado-only MCP server. Build context is the repo root.
+# Base image tags are pinned to digests during Mac Mini setup (runbook step 5).
+
+# Build stage: compile only the hardened entry point and what it imports.
+FROM node:24-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY tsconfig.json tsconfig.hardened.json ./
+COPY src ./src
+RUN npx tsc -p tsconfig.hardened.json
+
+# Runtime stage: production dependencies only, minus browser automation and CLI packages.
 FROM node:24-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
-# --ignore-scripts: no dependency install scripts run at all.
-RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY tsconfig.json ./
-COPY src ./src
-RUN npx tsc && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+ && npm uninstall --ignore-scripts --no-audit --no-fund \
+      playwright playwright-extra puppeteer-extra-plugin-stealth chalk commander \
+ && npm cache clean --force
+COPY --from=build /app/dist ./dist
 USER node
 ENV HOME=/home/node
 ENTRYPOINT ["node", "dist/mcp-ocado.js"]

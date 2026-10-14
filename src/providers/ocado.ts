@@ -1,4 +1,4 @@
-import { installOcadoAllowlist } from '../hardening/ocado-allowlist';
+import { installOcadoAllowlist, COMPLETED_ORDERS_QUERY } from '../hardening/ocado-allowlist';
 import axios, { AxiosInstance } from 'axios';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -52,36 +52,6 @@ const NOT_IMPLEMENTED_YET =
   '(capturing them requires performing a real booking). Everything else ' +
   'works: login, search, browse, favourites, basket, slots, orders.';
 
-/** Verbatim GraphQL query Ocado's SPA uses for order history. */
-const COMPLETED_ORDERS_QUERY = `query GetCompletedOrders($first: Int!, $after: String) {
-  completedOrders(first: $first, after: $after) {
-    retentionPeriod
-    pageInfo { endCursor hasNextPage __typename }
-    edges {
-      node {
-        orderId
-        status
-        region { retailerRegionId regionId __typename }
-        prices { total { currency amount __typename } __typename }
-        recurringOrderDefinition { name __typename }
-        slot {
-          __typename
-          ... on InternalOrderSlot {
-            start end type shippingGroupType
-            carrier { carrierId __typename }
-            externalLocker { externalLockerId __typename }
-            deliveryDestination { deliveryMethod name address { timeZone __typename } __typename }
-            __typename
-          }
-          ... on ImportedOrderSlot { start end name timeZone __typename }
-        }
-        __typename
-      }
-      __typename
-    }
-    __typename
-  }
-}`;
 
 interface OcadoSession {
   cookies: any[];
@@ -146,7 +116,7 @@ export class OcadoProvider implements GroceryProvider {
   constructor() {
     this.client = axios.create({
       baseURL: BASE_URL,
-      maxRedirects: 5,
+      maxRedirects: 0,
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'application/json',
@@ -172,70 +142,15 @@ export class OcadoProvider implements GroceryProvider {
   }
 
   static saveSession(cookies: any[]): void {
-    if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
-    const session: OcadoSession = { cookies, savedAt: new Date().toISOString() };
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
+    throw new Error('saveSession: removed from this hardened build.');
   }
 
   async login(email: string, password: string): Promise<void> {
-    throw new Error('login: Disabled in this hardened build.');
-    // Playwright login against https://www.ocado.com/login.
-    // If this proves brittle (Ocado tweaks their SPA), use
-    // `groc --provider ocado import-session --file <cookies.json>` instead —
-    // the same escape hatch the Tesco provider uses for Akamai.
-    const { chromium } = await import('playwright');
-    const browser = await chromium.launch({ headless: false });
-    const context = await browser.newContext({ userAgent: USER_AGENT });
-    const page = await context.newPage();
-    try {
-      await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
-
-      // Cookie consent, if present
-      try {
-        const accept = page.locator('#onetrust-accept-btn-handler');
-        if (await accept.isVisible({ timeout: 3000 })) {
-          await accept.click();
-          await page.waitForTimeout(1500);
-        }
-      } catch { /* no banner */ }
-
-      await page.waitForSelector('input[type="email"], input[name="email"], #username', { timeout: 15000 });
-      await page.fill('input[type="email"], input[name="email"], #username', email);
-      await page.fill('input[type="password"], input[name="password"], #password', password);
-      await page.click('[data-synthetics="login-submit-button"]');
-
-      const otpInput = page.locator('[data-synthetics="username-input"], input[name="otpVerify"]');
-
-      if (await otpInput.isVisible({ timeout: 8000 }).catch(() => false)) {
-        console.log('\n🔐 MFA required — check your email for a one-time code.');
-        const otp = await ask('Enter the OTP code from your email: ');
-        if (!otp || otp.length < 6) throw new Error('Invalid OTP code');
-        await otpInput.fill(otp);
-        await page.waitForTimeout(400);
-        // yes, it really does identify as password-reset-button
-        await page.click('[data-synthetics="password-reset-button"]');
-      }
-
-      // Logged-in pages greet the user / drop the login form
-      await page.waitForTimeout(6000);
-      if (page.url().includes('/login')) {
-        throw new Error('still on /login after submit — wrong credentials or MFA challenge');
-      }
-
-      const cookies = await context.cookies();
-      OcadoProvider.saveSession(cookies);
-      this.client.defaults.headers.common['Cookie'] =
-        cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
-    } finally {
-      await browser.close();
-    }
+    throw new Error('login: removed from this hardened build.');
   }
 
   async logout(): Promise<void> {
-    if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-    delete this.client.defaults.headers.common['Cookie'];
-    this.csrfToken = null;
+    throw new Error('logout: removed from this hardened build.');
   }
 
   async isAuthenticated(): Promise<boolean> {
@@ -517,10 +432,7 @@ export class OcadoProvider implements GroceryProvider {
   }
 
   async clearBasket(): Promise<void> {
-    const cart = await this.rawCart();
-    for (const i of OcadoProvider.cartItems(cart)) {
-      if (i.productId && i.quantity) await this.applyQuantity(i.productId, -i.quantity);
-    }
+    throw new Error('clearBasket: removed from this hardened build.');
   }
 
   // --------------------------------------------- slots, orders, regulars --
@@ -529,50 +441,11 @@ export class OcadoProvider implements GroceryProvider {
   private locationIds: { dest: string; region: string } | null = null;
 
   private async getLocationIds(): Promise<{ dest: string; region: string }> {
-    if (this.locationIds) return this.locationIds;
-    const res = await this.client.get('/checkout', {
-      headers: { Accept: 'text/html,application/xhtml+xml' },
-    });
-    const html = String(res.data);
-    const dest = /"deliveryDestinationId":"([0-9a-f-]{36})"/.exec(html)?.[1];
-    const region = /"regionId":"([0-9a-f-]{36})"/.exec(html)?.[1];
-    if (!dest || !region) {
-      throw new Error('Could not find deliveryDestinationId/regionId on /checkout — logged out?');
-    }
-    this.locationIds = { dest, region };
-    return this.locationIds;
+    throw new Error('getLocationIds: removed from this hardened build.');
   }
 
   async getDeliverySlots(): Promise<DeliverySlot[]> {
-    throw new Error('getDeliverySlots: Disabled in this hardened build.');
-    const { dest, region } = await this.getLocationIds();
-    const res = await this.client.post(
-      '/api/ecomslots/v2/slots',
-      {
-        deliveryDestinationId: dest,
-        regionId: region,
-        displayConfiguration: 'DELIVERY_METHOD',
-        shippingGroupType: 'default home delivery',
-        numberOfDays: 7,
-      },
-      { headers: { 'x-csrf-token': await this.getCsrfToken() } }
-    );
-    const out: DeliverySlot[] = [];
-    for (const carrier of res.data?.carriers ?? []) {
-      for (const day of carrier.gridSlots ?? []) {
-        for (const s of day.slots ?? []) {
-          out.push({
-            slot_id: s.slotId,
-            start_time: s.slotWindow?.startTime ?? '',
-            end_time: s.slotWindow?.endTime ?? '',
-            date: day.day ?? (s.slotWindow?.startTime ?? '').slice(0, 10),
-            price: num(s.deliveryPrice?.amount) ?? 0,
-            available: (s.attributes ?? []).includes('AVAILABLE'),
-          });
-        }
-      }
-    }
-    return out;
+    throw new Error('getDeliverySlots: removed from this hardened build.');
   }
 
   async getOrders(): Promise<Order[]> {
@@ -623,13 +496,11 @@ export class OcadoProvider implements GroceryProvider {
   // --------------------------------------------- not yet reverse-engineered --
 
   async bookSlot(_slotId: string): Promise<void> {
-    throw new Error('bookSlot: Disabled in this hardened build.');
-    throw new Error(NOT_IMPLEMENTED_YET);
+    throw new Error('bookSlot: removed from this hardened build.');
   }
 
   async checkout(_dryRun?: boolean): Promise<Order> {
-    throw new Error('checkout: Disabled in this hardened build.');
-    throw new Error(NOT_IMPLEMENTED_YET);
+    throw new Error('checkout: removed from this hardened build.');
   }
 }
 
@@ -641,31 +512,5 @@ export class OcadoProvider implements GroceryProvider {
  * Usage: groc --provider ocado import-session --file ~/Downloads/ocado-cookies.json
  */
 export function importSession(filePath: string): void {
-  const resolved = filePath.startsWith('~')
-    ? path.join(os.homedir(), filePath.slice(1))
-    : path.resolve(filePath);
-  if (!fs.existsSync(resolved)) throw new Error(`Cookie file not found: ${resolved}`);
-
-  const raw = JSON.parse(fs.readFileSync(resolved, 'utf-8'));
-  let cookies: any[];
-  if (Array.isArray(raw)) cookies = raw;
-  else if (Array.isArray(raw.cookies)) cookies = raw.cookies;
-  else cookies = Object.values(raw).flat() as any[];
-
-  cookies = cookies
-    .filter((c: any) => (c.name || c.Name) && (c.value !== undefined || c.Value !== undefined))
-    .map((c: any) => ({
-      name: c.name ?? c.Name,
-      value: c.value ?? c.Value,
-      domain: c.domain ?? c.Domain ?? '.ocado.com',
-      path: c.path ?? c.Path ?? '/',
-      expires: c.expirationDate ?? c.expires ?? -1,
-      httpOnly: c.httpOnly ?? c.HttpOnly ?? false,
-      secure: c.secure ?? c.Secure ?? false,
-      sameSite: c.sameSite ?? c.SameSite ?? 'Lax',
-    }));
-  if (cookies.length === 0) throw new Error('No cookies found in the file — check the export format.');
-
-  OcadoProvider.saveSession(cookies);
-  console.log(`✅ Imported ${cookies.length} cookies to ${SESSION_FILE}`);
+  throw new Error('importSession: removed from this hardened build.');
 }

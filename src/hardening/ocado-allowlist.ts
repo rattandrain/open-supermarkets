@@ -1,17 +1,67 @@
 /**
  * Hardening: HTTP allowlist for the Ocado provider.
  *
- * Every request the Ocado axios client makes, and every redirect it would
- * follow, must match one of the rules below or it is refused before leaving
- * the process. Checkout, slots, login, account and payment paths are not on
+ * Every request the Ocado axios client makes must match one of the rules
+ * below or it is refused before leaving the process. Redirects are never
+ * followed. Checkout, slots, login, account and payment paths are not on
  * the list, so they cannot be reached even if some code path tries.
  *
- * This is defence in depth: the container's egress proxy separately limits
- * which hosts are reachable at all.
+ * This is the only path-level control. The container's egress proxy limits
+ * which hosts are reachable, but it cannot see HTTPS paths.
  */
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 
 const ALLOWED_HOST = 'www.ocado.com';
+
+/** Verbatim GraphQL query Ocado's SPA uses for order history. */
+export const COMPLETED_ORDERS_QUERY = `query GetCompletedOrders($first: Int!, $after: String) {
+  completedOrders(first: $first, after: $after) {
+    retentionPeriod
+    pageInfo { endCursor hasNextPage __typename }
+    edges {
+      node {
+        orderId
+        status
+        region { retailerRegionId regionId __typename }
+        prices { total { currency amount __typename } __typename }
+        recurringOrderDefinition { name __typename }
+        slot {
+          __typename
+          ... on InternalOrderSlot {
+            start end type shippingGroupType
+            carrier { carrierId __typename }
+            externalLocker { externalLockerId __typename }
+            deliveryDestination { deliveryMethod name address { timeZone __typename } __typename }
+            __typename
+          }
+          ... on ImportedOrderSlot { start end name timeZone __typename }
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}`;
+
+/**
+ * The only GraphQL request allowed: the exact order-history query above,
+ * with only the expected keys and variables. Anything else is refused.
+ */
+function isOrderHistoryQuery(data: unknown): boolean {
+  const body = parseBody(data);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const keys = Object.keys(body);
+  if (!keys.every((k) => ['operationName', 'query', 'variables'].includes(k))) return false;
+  if (body.operationName !== 'GetCompletedOrders') return false;
+  if (body.query !== COMPLETED_ORDERS_QUERY) return false;
+  const v = body.variables ?? {};
+  if (typeof v !== 'object' || Array.isArray(v)) return false;
+  if (!Object.keys(v).every((k) => ['first', 'after'].includes(k))) return false;
+  if (!Number.isInteger(v.first) || v.first < 1 || v.first > 50) return false;
+  if (v.after !== undefined && v.after !== null && typeof v.after !== 'string') return false;
+  return true;
+}
 
 type Method = 'GET' | 'POST' | 'PUT';
 
@@ -33,8 +83,8 @@ const RULES: Rule[] = [
   {
     method: 'POST',
     path: /^\/graphql$/,
-    body: (data) => parseBody(data)?.operationName === 'GetCompletedOrders',
-    why: 'order history query only',
+    body: isOrderHistoryQuery,
+    why: 'the exact order history query only',
   },
   { method: 'GET', path: /^\/api\/order\/v6\/orders\/[A-Za-z0-9-]+$/, why: 'single past order' },
   { method: 'GET', path: /^\/api\/recurringshopping\/v2\/web\/definitions$/, why: 'regulars list' },
@@ -117,14 +167,7 @@ export function installOcadoAllowlist(client: AxiosInstance): void {
     return config;
   });
 
-  // Redirects are followed inside the HTTP layer and bypass interceptors,
-  // so check each hop explicitly. A redirected request becomes a GET.
-  client.defaults.maxRedirects = 3;
-  (client.defaults as any).beforeRedirect = (options: any) => {
-    const proto = options.protocol ?? 'https:';
-    const host = options.hostname ?? options.host ?? '';
-    const path = options.path ?? '/';
-    const port = options.port ? `:${options.port}` : '';
-    assertAllowed('GET', `${proto}//${host}${port}${path}`);
-  };
+  // Never follow redirects. A redirect could point anywhere, and redirect
+  // hooks are easy to get wrong, so any 3xx response becomes an error.
+  client.defaults.maxRedirects = 0;
 }
