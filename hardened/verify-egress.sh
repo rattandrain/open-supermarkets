@@ -23,6 +23,9 @@ async function http(url, viaProxy) {
       timeout: 12000, maxRedirects: 0, validateStatus: () => true,
       ...(viaProxy ? {} : { proxy: false }),
     });
+    // The proxy refusing is itself an HTTP reply: count it as blocked, not reached.
+    if (viaProxy && r.status === 403 && /^tinyproxy/i.test(r.headers.server || ""))
+      return { reached: false, detail: "HTTP 403 from proxy" };
     return { reached: true, detail: `HTTP ${r.status}` };
   } catch (e) {
     return { reached: false, detail: e.code || e.message };
@@ -69,8 +72,8 @@ function connectViaProxy(target) {
     report(!r.reached, `proxy refuses ${u}`, r.detail);
   }
 
-  // Must be blocked: CONNECT to Ocado on other ports, and to look-alike hosts
-  for (const t of ["www.ocado.com:80", "www.ocado.com:8443", "ocado.com:443", "www.ocado.com.example.com:443"]) {
+  // Must be blocked: CONNECT to other hosts, to Ocado on other ports, and to look-alike hosts
+  for (const t of ["example.com:443", "1.1.1.1:443", "www.ocado.com:80", "www.ocado.com:8443", "ocado.com:443", "www.ocado.com.example.com:443"]) {
     r = await connectViaProxy(t);
     report(!r.reached, `proxy refuses CONNECT ${t}`, r.detail);
   }
