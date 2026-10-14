@@ -1,6 +1,7 @@
 # Egress proxy: the only route out for the MCP container.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
-RUN apk add --no-cache tinyproxy=1.11.2-r0
+# Alpine 3.24: main and community supported until 2028-06-01 (alpinelinux.org/releases).
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+RUN apk add --no-cache tinyproxy=1.11.3-r0
 COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
 COPY egress-allowlist.txt /etc/tinyproxy/filter
 USER tinyproxy
